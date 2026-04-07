@@ -38,6 +38,13 @@ export class SlaveWsClient extends EventEmitter {
 
     this.ws.on('close', (code, reason) => {
       console.log(`[WS] Disconnected — code: ${code} reason: ${reason.toString() || '(none)'}`);
+
+      // 4001 = invalid credentials — retrying with the same key is pointless
+      if (code === 4001) {
+        console.error('[WS] Authentication rejected — check ACCOUNT_ID and SLAVE_KEY in .env');
+        process.exit(1);
+      }
+
       this.scheduleReconnect();
     });
 

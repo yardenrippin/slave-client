@@ -1,6 +1,14 @@
-import { chromium, Browser, Page } from 'playwright';
+import { chromium, Browser, Page, Locator } from 'playwright-core';
 import { config } from './config';
 import { EntrySignal, ExitSignal, TradeSignal } from './types';
+
+// Order Panel container selectors — tried in order of reliability.
+// If TradingView changes their DOM, update these.
+const ORDER_PANEL_SELECTORS = [
+  '[data-name="order-panel"]',
+  '.order-panel',
+  '[class*="orderPanel"]',
+];
 
 export class PlaywrightExecutor {
   private browser: Browser | null = null;
@@ -90,31 +98,32 @@ export class PlaywrightExecutor {
   // ─── TradingView Order Panel actions ─────────────────────────────────────
   //
   // IMPORTANT: TradingView changes DOM classes regularly.
-  // These selectors use text content and roles for maximum resilience.
+  // These selectors use text content scoped to the Order Panel container.
   // If a selector breaks after a TradingView update, check the Order Panel
-  // in Chrome DevTools and update the relevant method below.
+  // in Chrome DevTools and update ORDER_PANEL_SELECTORS at the top.
 
-  private async setQuantity(qty: number): Promise<void> {
+  /** Resolve the Order Panel container element. */
+  private async getOrderPanel(): Promise<Locator> {
     const page = this.page!;
-
-    // The quantity input sits inside the Order Panel.
-    // Try the data-name attribute first (most stable), fall back to positional.
-    const selectors = [
-      '[data-name="order-panel"] input[type="text"]',
-      '[data-name="order-panel"] input[type="number"]',
-      '.order-panel input[type="text"]',
-    ];
-
-    let input = null;
-    for (const sel of selectors) {
-      const el = page.locator(sel).first();
-      if (await el.isVisible().catch(() => false)) {
-        input = el;
-        break;
+    for (const sel of ORDER_PANEL_SELECTORS) {
+      const panel = page.locator(sel).first();
+      if (await panel.isVisible().catch(() => false)) {
+        return panel;
       }
     }
+    throw new Error(
+      'Could not find the Order Panel. ' +
+        'Make sure it is visible on the chart and your broker is connected.',
+    );
+  }
 
-    if (!input) {
+  private async setQuantity(qty: number): Promise<void> {
+    const panel = await this.getOrderPanel();
+
+    // The quantity input sits inside the Order Panel
+    const input = panel.locator('input[type="text"], input[type="number"]').first();
+
+    if (!(await input.isVisible().catch(() => false))) {
       throw new Error(
         'Could not find quantity input in Order Panel. ' +
           'Make sure the Order Panel is visible and your broker is connected.',
@@ -123,15 +132,16 @@ export class PlaywrightExecutor {
 
     await input.click({ clickCount: 3 }); // select all existing value
     await input.fill(qty.toString());
+    // Brief pause so TradingView processes the new value before clicking Buy/Sell
+    await this.page!.waitForTimeout(150);
     console.log(`[Playwright] Quantity set to ${qty}`);
   }
 
   private async clickBuyButton(): Promise<void> {
-    const page = this.page!;
+    const panel = await this.getOrderPanel();
 
-    // TradingView Buy button text varies: "Buy", "Buy Mkt", "Buy Limit"
-    // We click the first visible button that starts with "Buy"
-    const btn = page
+    // Scoped to Order Panel — avoids matching unrelated "Buy" buttons on the page
+    const btn = panel
       .locator('button')
       .filter({ hasText: /^Buy/ })
       .first();
@@ -142,9 +152,9 @@ export class PlaywrightExecutor {
   }
 
   private async clickSellButton(): Promise<void> {
-    const page = this.page!;
+    const panel = await this.getOrderPanel();
 
-    const btn = page
+    const btn = panel
       .locator('button')
       .filter({ hasText: /^Sell/ })
       .first();
@@ -157,7 +167,8 @@ export class PlaywrightExecutor {
   private async clickCloseButton(): Promise<void> {
     const page = this.page!;
 
-    // "Close Position" or "Flatten" — only appears when a position is open
+    // "Close Position" or "Flatten" — may be inside the Order Panel or in a
+    // floating position widget, so search the full page
     const btn = page
       .locator('button')
       .filter({ hasText: /Close Position|Flatten|Close All/ })
