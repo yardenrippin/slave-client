@@ -1,0 +1,22 @@
+{
+  "name": "trade-copier-slave",
+  "version": "1.0.0",
+  "description": "Slave client — receives trade signals and executes them on TradingView via Playwright",
+  "private": true,
+  "scripts": {
+    "start": "ts-node src/index.ts",
+    "build": "tsc",
+    "start:prod": "node dist/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "playwright": "^1.44.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/ws": "^8.5.12",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.2"
+  }
+}
