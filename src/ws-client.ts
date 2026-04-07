@@ -1,4 +1,4 @@
-import * as WebSocket from 'ws';
+import WebSocket from 'ws';
 import { EventEmitter } from 'events';
 import { config } from './config';
 import { IncomingMessage, TradeSignal } from './types';
@@ -27,7 +27,7 @@ export class SlaveWsClient extends EventEmitter {
       console.log('[WS] Connected to master server');
     });
 
-    this.ws.on('message', (data: WebSocket.RawData) => {
+    this.ws.on('message', (data) => {
       this.handleMessage(data.toString());
     });
 
