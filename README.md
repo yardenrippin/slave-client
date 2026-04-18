@@ -241,7 +241,7 @@ Signals are processed **one at a time in order** — if two arrive at the same t
 
 ## Notes
 
-- **One chart per slave.** The client looks for the first open TradingView chart tab. If you have multiple charts open, it picks the first one. For now, each slave follows one symbol.
+- **One chart per slave.** The client looks for the first open TradingView chart tab. If you have multiple charts open, it picks the first one. When a signal arrives for a different symbol, the client automatically switches the chart to that symbol.
 - **Keep Chrome open.** If you close Chrome, the slave loses its Playwright connection and will error.
 - **Keep the terminal open.** Closing the `npm start` terminal stops signal processing.
 - Error screenshots are saved as `error-<timestamp>.png` in the project folder when Playwright fails to click.
