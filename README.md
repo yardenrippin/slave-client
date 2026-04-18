@@ -127,7 +127,7 @@ Open `.env` and set:
 
 ```env
 # WebSocket URL of the master server (provided by the server operator)
-SERVER_URL=wss://yourserver.com
+SERVER_URL=wss://social-trading-server-production.up.railway.app
 
 # Your unique account ID (provided by the server operator)
 ACCOUNT_ID=apex_eval_1
