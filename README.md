@@ -1,5 +1,83 @@
 # Trade Copier — Slave Client
 
+---
+
+## ⚡ Quick Commands
+
+### Start Chrome (run once per session, before `npm start`)
+
+**Mac:**
+```bash
+bash start-chrome.sh
+```
+
+**Manual Mac command (if the script doesn't work):**
+```bash
+pkill -9 "Google Chrome" 2>/dev/null; sleep 1
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
+  --remote-debugging-port=9222 \
+  --user-data-dir=/tmp/chrome-tradingview \
+  --no-first-run \
+  https://www.tradingview.com/chart/
+```
+
+**Windows:**
+```bat
+start-chrome.bat
+```
+
+**Manual Windows command:**
+```bat
+taskkill /F /IM chrome.exe 2>nul
+"C:\Program Files\Google\Chrome\Application\chrome.exe" ^
+  --remote-debugging-port=9222 ^
+  --user-data-dir=%TEMP%\chrome-tradingview ^
+  --no-first-run ^
+  https://www.tradingview.com/chart/
+```
+
+---
+
+### Start the slave client
+
+```bash
+npm start
+```
+
+---
+
+### Kill Chrome and restart clean (if Chrome feels stuck)
+
+**Mac:**
+```bash
+pkill -9 "Google Chrome" && sleep 1 && bash start-chrome.sh
+```
+
+**Windows:**
+```bat
+taskkill /F /IM chrome.exe && start-chrome.bat
+```
+
+---
+
+### Check if Chrome remote debugging is active
+
+```bash
+curl http://localhost:9222/json
+```
+
+You should see a JSON list of open tabs. If you get "Connection refused", Chrome is not running with remote debugging.
+
+---
+
+### Install dependencies (first time only)
+
+```bash
+npm install
+```
+
+---
+
 Runs on a follower's machine. Receives trade signals from the master server via WebSocket and executes them on TradingView using Playwright.
 
 ---
@@ -13,7 +91,7 @@ Master server (NestJS)
 Slave client (this project)
     │  Playwright CDP
     ▼
-Your Chrome → TradingView Order Panel → Buy / Sell / Close
+Your Chrome → TradingView Order Panel → Buy / Sell / Close / Update SL+TP
 ```
 
 Everything runs **locally on your machine**. The master never touches your broker.
@@ -71,6 +149,17 @@ CHROME_DEBUG_PORT=9222
 
 You must do these steps **in order** each time you want to copy trades.
 
+---
+
+> **Why `start-chrome.bat` / `start-chrome.sh` and not just opening Chrome normally?**
+>
+> Playwright controls Chrome through a remote debugging port (`9222`).
+> A normally-opened Chrome does **not** have this port enabled — Playwright cannot connect to it and the slave will fail immediately.
+> The start script adds the `--remote-debugging-port=9222` flag that makes this possible.
+> **Always use the script to open Chrome, not the desktop icon.**
+
+---
+
 ### Step 1 — Start Chrome with remote debugging
 
 **Windows:** double-click `start-chrome.bat`
@@ -80,7 +169,7 @@ You must do these steps **in order** each time you want to copy trades.
 bash start-chrome.sh
 ```
 
-This opens Chrome on TradingView. Do **not** close this terminal window.
+This opens Chrome on TradingView. Do **not** close this window.
 
 ### Step 2 — Set up TradingView in Chrome
 
@@ -116,8 +205,11 @@ The client is now live and waiting for signals.
 
 1. Master fires a webhook signal (from TradingView alert)
 2. Your client receives it via WebSocket instantly (~10ms)
-3. Playwright clicks Buy/Sell (or Close Position) on your TradingView tab
-4. Order is placed through your own broker session
+3. Playwright acts on your TradingView tab:
+   - **entry** — clicks Buy or Sell on the Order Panel
+   - **exit** — clicks Close Position
+   - **update-brackets** — edits the Stop Loss and/or Take Profit in the Positions panel
+4. Order is placed / modified through your own broker session
 
 Signals are processed **one at a time in order** — if two arrive at the same time, the second waits for the first to finish.
 

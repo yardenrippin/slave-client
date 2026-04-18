@@ -1,18 +1,36 @@
-import { chromium, Browser, Page, Locator } from 'playwright-core';
+/**
+ * PlaywrightExecutor — the public API used by index.ts.
+ *
+ * This file is intentionally thin — it connects to Chrome, finds the
+ * TradingView chart tab, and delegates all UI interactions to the
+ * modules in src/playwright/.
+ *
+ * Architecture:
+ *   index.ts
+ *     └─ PlaywrightExecutor
+ *          ├─ SymbolNavigator  (symbol search + selection)
+ *          ├─ OrderDialog      (entry orders, brackets)
+ *          └─ PositionManager  (exits, bracket updates)
+ */
+import { chromium, Browser, Page } from 'playwright-core';
 import { config } from './config';
-import { EntrySignal, ExitSignal, TradeSignal } from './types';
-
-// Order Panel container selectors — tried in order of reliability.
-// If TradingView changes their DOM, update these.
-const ORDER_PANEL_SELECTORS = [
-  '[data-name="order-panel"]',
-  '.order-panel',
-  '[class*="orderPanel"]',
-];
+import {
+  EntrySignal,
+  ExitSignal,
+  UpdateBracketsSignal,
+  TradeSignal,
+} from './types';
+import { SymbolNavigator } from './playwright/symbol-navigator';
+import { OrderDialog } from './playwright/order-dialog';
+import { PositionManager } from './playwright/position-manager';
 
 export class PlaywrightExecutor {
   private browser: Browser | null = null;
   private page: Page | null = null;
+
+  private symbolNavigator: SymbolNavigator | null = null;
+  private orderDialog: OrderDialog | null = null;
+  private positionManager: PositionManager | null = null;
 
   // ─── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -22,7 +40,6 @@ export class PlaywrightExecutor {
 
     this.browser = await chromium.connectOverCDP(cdpUrl);
 
-    // Find the TradingView chart tab across all browser contexts
     for (const context of this.browser.contexts()) {
       for (const page of context.pages()) {
         if (page.url().includes('tradingview.com/chart')) {
@@ -40,170 +57,119 @@ export class PlaywrightExecutor {
       );
     }
 
+    // Initialize the modules now that we have a page
+    this.symbolNavigator = new SymbolNavigator(this.page);
+    this.orderDialog = new OrderDialog(this.page);
+    this.positionManager = new PositionManager(this.page);
+
     console.log(`[Playwright] Connected to TradingView tab: ${this.page.url()}`);
   }
 
   async disconnect(): Promise<void> {
     // connectOverCDP — close only the CDP session, not the user's browser
-    await this.browser?.close();
+    await this.browser?.close().catch(() => {});
   }
 
   // ─── Public ───────────────────────────────────────────────────────────────
 
   async executeTrade(signal: TradeSignal): Promise<void> {
-    if (!this.page) throw new Error('[Playwright] Not connected — call connect() first');
+    this.requireConnected();
 
-    if (signal.type === 'entry') {
-      await this.executeEntry(signal);
-    } else {
-      await this.executeExit(signal);
+    switch (signal.type) {
+      case 'entry':
+        // Navigate to the symbol before placing an order
+        await this.withErrorScreenshot('navigateToSymbol', () =>
+          this.symbolNavigator!.navigateTo(signal.symbol),
+        );
+        return this.executeEntry(signal);
+
+      case 'exit':
+      case 'update-brackets':
+        // DO NOT navigate — clicking the edit/close button in the positions
+        // panel causes TradingView to auto-navigate to the correct chart.
+        // Symbol navigation here would switch the chart AWAY from the open
+        // position and cause the buttons to target the wrong row.
+        return signal.type === 'exit'
+          ? this.executeExit(signal)
+          : this.executeUpdateBrackets(signal);
     }
   }
 
-  // ─── Entry ────────────────────────────────────────────────────────────────
+  // ─── Entry ───────────────────────────────────────────────────────────────
 
   private async executeEntry(signal: EntrySignal): Promise<void> {
     console.log(
       `[Playwright] Entry — ${signal.action} ${signal.quantity}x ${signal.symbol}`,
     );
 
-    await this.withErrorScreenshot('setQuantity', () =>
-      this.setQuantity(signal.quantity),
-    );
+    // TradingView's order dialog has a single price input per bracket —
+    // accept whichever of price/stopPrice is populated by the master.
+    const takeProfit =
+      signal.bracket1?.price ?? signal.bracket1?.stopPrice ?? null;
+    const stopLoss =
+      signal.bracket2?.stopPrice ?? signal.bracket2?.price ?? null;
 
-    if (signal.action === 'Buy') {
-      await this.withErrorScreenshot('clickBuy', () => this.clickBuyButton());
-    } else {
-      await this.withErrorScreenshot('clickSell', () => this.clickSellButton());
-    }
+    await this.withErrorScreenshot('placeOrder', () =>
+      this.orderDialog!.placeOrder({
+        side: signal.action,
+        type: signal.orderType,
+        quantity: signal.quantity,
+        limitPrice: signal.price,
+        takeProfit,
+        stopLoss,
+      }),
+    );
 
     console.log(
       `[Playwright] Entry done — ${signal.action} ${signal.quantity}x ${signal.symbol}`,
     );
   }
 
-  // ─── Exit ─────────────────────────────────────────────────────────────────
+  // ─── Exit ────────────────────────────────────────────────────────────────
 
   private async executeExit(signal: ExitSignal): Promise<void> {
     console.log(
-      `[Playwright] Exit — Close ${signal.symbol} ` +
-        `(${signal.quantity === 0 ? 'full' : signal.quantity + ' contracts'})`,
+      `[Playwright] Exit — ${signal.symbol} ` +
+        `(${signal.quantity === 0 ? 'full close' : signal.quantity + ' contracts'})`,
     );
 
-    await this.withErrorScreenshot('clickClose', () => this.clickCloseButton());
-
-    console.log(`[Playwright] Exit done — ${signal.symbol} closed`);
-  }
-
-  // ─── TradingView Order Panel actions ─────────────────────────────────────
-  //
-  // IMPORTANT: TradingView changes DOM classes regularly.
-  // These selectors use text content scoped to the Order Panel container.
-  // If a selector breaks after a TradingView update, check the Order Panel
-  // in Chrome DevTools and update ORDER_PANEL_SELECTORS at the top.
-
-  /** Resolve the Order Panel container element. */
-  private async getOrderPanel(): Promise<Locator> {
-    const page = this.page!;
-    for (const sel of ORDER_PANEL_SELECTORS) {
-      const panel = page.locator(sel).first();
-      if (await panel.isVisible().catch(() => false)) {
-        return panel;
-      }
-    }
-    throw new Error(
-      'Could not find the Order Panel. ' +
-        'Make sure it is visible on the chart and your broker is connected.',
+    await this.withErrorScreenshot('closePosition', () =>
+      this.positionManager!.closePosition(signal.symbol),
     );
+
+    console.log(`[Playwright] Exit done — ${signal.symbol}`);
   }
 
-  private async setQuantity(qty: number): Promise<void> {
-    const panel = await this.getOrderPanel();
+  // ─── Update Brackets ─────────────────────────────────────────────────────
 
-    // The quantity input sits inside the Order Panel
-    const input = panel.locator('input[type="text"], input[type="number"]').first();
+  private async executeUpdateBrackets(
+    signal: UpdateBracketsSignal,
+  ): Promise<void> {
+    console.log(
+      `[Playwright] Update brackets — ${signal.symbol} ` +
+        `SL: ${signal.stopLoss ?? 'unchanged'} TP: ${signal.takeProfit ?? 'unchanged'}`,
+    );
 
-    if (!(await input.isVisible().catch(() => false))) {
-      throw new Error(
-        'Could not find quantity input in Order Panel. ' +
-          'Make sure the Order Panel is visible and your broker is connected.',
-      );
-    }
+    await this.withErrorScreenshot('updateBrackets', () =>
+      this.positionManager!.updateBrackets(signal.takeProfit, signal.stopLoss, signal.symbol),
+    );
 
-    await input.click({ clickCount: 3 }); // select all existing value
-    await input.fill(qty.toString());
-    // Brief pause so TradingView processes the new value before clicking Buy/Sell
-    await this.page!.waitForTimeout(150);
-    console.log(`[Playwright] Quantity set to ${qty}`);
+    console.log(`[Playwright] Update brackets done — ${signal.symbol}`);
   }
 
-  private async clickBuyButton(): Promise<void> {
-    const panel = await this.getOrderPanel();
+  // ─── Utilities ───────────────────────────────────────────────────────────
 
-    // Scoped to Order Panel — avoids matching unrelated "Buy" buttons on the page
-    const btn = panel
-      .locator('button')
-      .filter({ hasText: /^Buy/ })
-      .first();
-
-    await btn.waitFor({ state: 'visible', timeout: 5_000 });
-    await btn.click();
-    console.log('[Playwright] Buy button clicked');
-  }
-
-  private async clickSellButton(): Promise<void> {
-    const panel = await this.getOrderPanel();
-
-    const btn = panel
-      .locator('button')
-      .filter({ hasText: /^Sell/ })
-      .first();
-
-    await btn.waitFor({ state: 'visible', timeout: 5_000 });
-    await btn.click();
-    console.log('[Playwright] Sell button clicked');
-  }
-
-  private async clickCloseButton(): Promise<void> {
-    const page = this.page!;
-
-    // "Close Position" or "Flatten" — may be inside the Order Panel or in a
-    // floating position widget, so search the full page
-    const btn = page
-      .locator('button')
-      .filter({ hasText: /Close Position|Flatten|Close All/ })
-      .first();
-
-    await btn.waitFor({ state: 'visible', timeout: 5_000 });
-    await btn.click();
-    console.log('[Playwright] Close button clicked');
-
-    // TradingView sometimes shows a confirmation dialog — handle it if it appears
-    await this.maybeConfirmClose();
-  }
-
-  private async maybeConfirmClose(): Promise<void> {
-    const page = this.page!;
-
-    // Wait up to 2s for a confirmation dialog — if none, continue silently
-    const confirmBtn = page
-      .locator('button')
-      .filter({ hasText: /^Yes$|^Confirm$|Close Position/ })
-      .first();
-
-    const appeared = await confirmBtn
-      .waitFor({ state: 'visible', timeout: 2_000 })
-      .then(() => true)
-      .catch(() => false);
-
-    if (appeared) {
-      await confirmBtn.click();
-      console.log('[Playwright] Confirmation dialog accepted');
+  private requireConnected(): void {
+    if (!this.page || !this.symbolNavigator || !this.orderDialog || !this.positionManager) {
+      throw new Error('[Playwright] Not connected — call connect() first');
     }
   }
 
-  // ─── Error handling ───────────────────────────────────────────────────────
-
+  /**
+   * Wrap any action so that a failure saves a full-page screenshot
+   * with a label prefix. The error is re-thrown so the signal queue
+   * marks it as failed.
+   */
   private async withErrorScreenshot(
     label: string,
     fn: () => Promise<void>,

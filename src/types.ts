@@ -22,6 +22,15 @@ export interface ExitSignal {
   timestamp: string;
 }
 
+export interface UpdateBracketsSignal {
+  type: 'update-brackets';
+  symbol: string;
+  tradeId: string | null;
+  stopLoss: number | null;   // null = leave unchanged
+  takeProfit: number | null; // null = leave unchanged
+  timestamp: string;
+}
+
 export interface ConnectedMessage {
   type: 'connected';
   label: string;
@@ -36,5 +45,5 @@ export interface BracketConfig {
   offset: number | null;
 }
 
-export type IncomingMessage = EntrySignal | ExitSignal | ConnectedMessage;
-export type TradeSignal = EntrySignal | ExitSignal;
+export type IncomingMessage = EntrySignal | ExitSignal | UpdateBracketsSignal | ConnectedMessage;
+export type TradeSignal = EntrySignal | ExitSignal | UpdateBracketsSignal;

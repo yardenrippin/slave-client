@@ -7,6 +7,9 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 const BASE_RECONNECT_DELAY_MS = 1_000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
 
+// Reject signals older than this — prevents replay of captured messages
+const MAX_SIGNAL_AGE_MS = 30_000;
+
 export class SlaveWsClient extends EventEmitter {
   private ws: WebSocket | null = null;
   private reconnectAttempts = 0;
@@ -15,12 +18,28 @@ export class SlaveWsClient extends EventEmitter {
   connect(): void {
     if (this.destroyed) return;
 
-    // Auth is passed as query params — server reads ?id=... &key=...
-    const url = `${config.serverUrl}/ws/slave?id=${config.accountId}&key=${config.slaveKey}`;
+    const url = `${config.serverUrl}/ws/slave`;
+
+    // Warn if the connection is not encrypted — credentials and signals
+    // would travel in plain text and could be intercepted or replayed.
+    if (!url.startsWith('wss://')) {
+      console.warn(
+        '[WS] WARNING: SERVER_URL is not wss:// — connection is unencrypted. ' +
+          'Use wss:// in production.',
+      );
+    }
 
     console.log(`[WS] Connecting to ${config.serverUrl} as "${config.accountId}"...`);
 
-    this.ws = new WebSocket(url);
+    // Auth is sent as HTTP headers on the WebSocket upgrade request.
+    // Headers are not stored in server access logs or browser history,
+    // unlike query params which are logged in plain text.
+    this.ws = new WebSocket(url, {
+      headers: {
+        'x-account-id': config.accountId,
+        'x-slave-key': config.slaveKey,
+      },
+    });
 
     this.ws.on('open', () => {
       this.reconnectAttempts = 0;
@@ -76,12 +95,30 @@ export class SlaveWsClient extends EventEmitter {
       return;
     }
 
-    if (msg.type === 'entry' || msg.type === 'exit') {
-      console.log(
-        `[WS] Signal received: ${msg.type} ${msg.symbol}` +
-          (msg.type === 'entry' ? ` ${msg.action} x${msg.quantity}` : ` reason: ${msg.reason}`),
-      );
-      // Emit to whoever is listening (index.ts feeds this into the queue)
+    if (msg.type === 'entry' || msg.type === 'exit' || msg.type === 'update-brackets') {
+      // Replay protection — drop signals that are too old.
+      // A captured/replayed message older than MAX_SIGNAL_AGE_MS is rejected.
+      const age = Date.now() - new Date(msg.timestamp).getTime();
+      if (age > MAX_SIGNAL_AGE_MS) {
+        console.warn(
+          `[WS] Dropping stale signal (age: ${Math.round(age / 1000)}s > ` +
+            `${MAX_SIGNAL_AGE_MS / 1000}s) — possible replay attack`,
+        );
+        return;
+      }
+
+      if (msg.type === 'entry' || msg.type === 'exit') {
+        console.log(
+          `[WS] Signal received: ${msg.type} ${msg.symbol}` +
+            (msg.type === 'entry' ? ` ${msg.action} x${msg.quantity}` : ` reason: ${msg.reason}`),
+        );
+      } else {
+        console.log(
+          `[WS] Signal received: update-brackets ${msg.symbol}` +
+            ` SL: ${msg.stopLoss ?? 'unchanged'} TP: ${msg.takeProfit ?? 'unchanged'}`,
+        );
+      }
+
       this.emit('signal', msg as TradeSignal);
       return;
     }
