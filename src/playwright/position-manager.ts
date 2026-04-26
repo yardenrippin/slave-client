@@ -254,19 +254,23 @@ export class PositionManager {
 
   private async confirmIfPrompted(): Promise<void> {
     const page = this.page;
+
+    // Wait for the popup animation to complete before scanning for the button
+    await sleep(page, 300, 500);
+
     const confirmBtn = page
       .locator('button, [role="button"]')
-      .filter({ hasText: /^Yes$|^Confirm$|^Close$|^Close position$/i })
+      .filter({ hasText: /^Close position$/i })
       .first();
 
     const appeared = await confirmBtn
-      .waitFor({ state: 'visible', timeout: 2_500 })
+      .waitFor({ state: 'visible', timeout: 5_000 })
       .then(() => true)
       .catch(() => false);
 
     if (appeared) {
       await humanClick(page, confirmBtn);
-      console.log('[PositionManager] Confirmation accepted');
+      console.log('[PositionManager] Close position confirmed');
     }
   }
 }
