@@ -9,13 +9,39 @@ echo Killing any existing Chrome processes...
 taskkill /F /IM chrome.exe 2>nul
 timeout /t 2 /nobreak >nul
 
+:: Find Chrome — try the most common install locations
+set CHROME_EXE=
+if exist "C:\Program Files\Google\Chrome\Application\chrome.exe" (
+  set CHROME_EXE=C:\Program Files\Google\Chrome\Application\chrome.exe
+) else if exist "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" (
+  set CHROME_EXE=C:\Program Files (x86)\Google\Chrome\Application\chrome.exe
+) else if exist "%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe" (
+  set CHROME_EXE=%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe
+)
+
+if "%CHROME_EXE%"=="" (
+  echo.
+  echo ERROR: Google Chrome not found in any of these locations:
+  echo   C:\Program Files\Google\Chrome\Application\chrome.exe
+  echo   C:\Program Files ^(x86^)\Google\Chrome\Application\chrome.exe
+  echo   %LOCALAPPDATA%\Google\Chrome\Application\chrome.exe
+  echo.
+  echo Please install Google Chrome from https://www.google.com/chrome
+  echo or find chrome.exe manually and update this bat file.
+  pause
+  exit /b 1
+)
+
+echo Found Chrome at: %CHROME_EXE%
 echo Starting Chrome with remote debugging on port %DEBUG_PORT%...
 
-start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" ^
+start "" "%CHROME_EXE%" ^
   --remote-debugging-port=%DEBUG_PORT% ^
   --no-first-run ^
   --no-default-browser-check ^
   %TRADINGVIEW_URL%
+
+timeout /t 3 /nobreak >nul
 
 echo.
 echo Chrome started. Please:
