@@ -159,45 +159,52 @@ export class PositionManager {
     const page = this.page;
     const label = buttonDataName === 'close-settings-cell-button' ? 'Close' : 'Protect';
 
-    // Shared JS snippet: find leaf → walk up → return coords.
-    // `requireVisible`: when true, only returns coords if the BUTTON rect is > 0.
-    //                   when false, returns coords from the ANCESTOR rect.
+    // Scoped row search — avoids false matches when the symbol also appears
+    // in the watchlist, chart header, or other panels on the page.
+    //
+    // Algorithm:
+    //   1. Find the positions panel by walking UP from button#positions.
+    //   2. Query only ROWS (tr / [role="row"]) within that panel.
+    //   3. Pick the first row whose text contains the symbol.
+    //   4. Phase 1 → return row center (always has a rect, used for hover).
+    //      Phase 2 → return button center after hover makes it visible.
     const evalScript = (requireVisible: boolean) =>
       `(function(sym, btnName, requireVisible) {
-        var all = Array.from(document.querySelectorAll('*'));
-        var symbolLeaf = null;
-        for (var i = 0; i < all.length; i++) {
-          var el = all[i];
-          var text = (el.textContent || '').trim();
-          if (text.indexOf(sym) === -1) continue;
-          var childHasText = Array.from(el.children).some(function(c) {
-            return (c.textContent || '').indexOf(sym) !== -1;
-          });
-          if (!childHasText) { symbolLeaf = el; break; }
-        }
-        if (!symbolLeaf) return null;
-
-        var ancestor = symbolLeaf.parentElement;
-        while (ancestor && ancestor !== document.body) {
-          var btn = ancestor.querySelector('[data-name="' + btnName + '"]');
-          if (btn) {
-            var btnRect = btn.getBoundingClientRect();
-            var rowRect = ancestor.getBoundingClientRect();
-            if (requireVisible) {
-              // Phase 2: return button coords only when it's actually visible
-              if (btnRect.width > 0 && btnRect.height > 0) {
-                return { x: btnRect.left + btnRect.width / 2, y: btnRect.top + btnRect.height / 2 };
-              }
-            } else {
-              // Phase 1: return row center (always has a rect even if button is hidden)
-              if (rowRect.width > 0 && rowRect.height > 0) {
-                return { x: rowRect.left + rowRect.width / 2, y: rowRect.top + rowRect.height / 2 };
-              }
-            }
+        // ── Step 1: scope to the positions panel ──────────────────────────
+        var searchRoot = document.body;
+        var posTab = document.querySelector('button#positions');
+        if (posTab) {
+          var el = posTab.parentElement;
+          while (el && el !== document.body) {
+            var r = el.getBoundingClientRect();
+            if (r.width > 300 && r.height > 80) { searchRoot = el; break; }
+            el = el.parentElement;
           }
-          ancestor = ancestor.parentElement;
         }
-        return null;
+
+        // ── Step 2: find the row that contains our symbol ─────────────────
+        var rows = Array.from(searchRoot.querySelectorAll('tr, [role="row"]'));
+        var targetRow = null;
+        for (var i = 0; i < rows.length; i++) {
+          if ((rows[i].textContent || '').indexOf(sym) !== -1) {
+            targetRow = rows[i];
+            break;
+          }
+        }
+        if (!targetRow) return null;
+
+        // ── Step 3: return coords ─────────────────────────────────────────
+        if (requireVisible) {
+          var btn = targetRow.querySelector('[data-name="' + btnName + '"]');
+          if (!btn) return null;
+          var br = btn.getBoundingClientRect();
+          if (br.width === 0 || br.height === 0) return null;
+          return { x: br.left + br.width / 2, y: br.top + br.height / 2 };
+        } else {
+          var rr = targetRow.getBoundingClientRect();
+          if (rr.width === 0 || rr.height === 0) return null;
+          return { x: rr.left + rr.width / 2, y: rr.top + rr.height / 2 };
+        }
       })(${JSON.stringify(symbol)}, ${JSON.stringify(buttonDataName)}, ${requireVisible})`;
 
     // ── Phase 1: find and hover the row ──────────────────────────────────
