@@ -35,7 +35,7 @@ export class PlaywrightExecutor {
   // ─── Lifecycle ────────────────────────────────────────────────────────────
 
   async connect(): Promise<void> {
-    const cdpUrl = `http://localhost:${config.chromeDebugPort}`;
+    const cdpUrl = `http://127.0.0.1:${config.chromeDebugPort}`;
     console.log(`[Playwright] Connecting to Chrome at ${cdpUrl}...`);
 
     this.browser = await chromium.connectOverCDP(cdpUrl);
