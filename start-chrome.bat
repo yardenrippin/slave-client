@@ -37,8 +37,10 @@ echo Starting Chrome with remote debugging on port %DEBUG_PORT%...
 
 start "" "%CHROME_EXE%" ^
   --remote-debugging-port=%DEBUG_PORT% ^
+  --user-data-dir=%TEMP%\chrome-tradingview ^
   --no-first-run ^
   --no-default-browser-check ^
+  --new-window ^
   %TRADINGVIEW_URL%
 
 timeout /t 3 /nobreak >nul
