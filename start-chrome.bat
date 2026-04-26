@@ -5,8 +5,9 @@
 set DEBUG_PORT=9222
 set TRADINGVIEW_URL=https://www.tradingview.com/chart/
 
-echo Killing any existing Chrome on port %DEBUG_PORT%...
-for /f "tokens=5" %%a in ('netstat -aon ^| find ":%DEBUG_PORT%"') do taskkill /F /PID %%a 2>nul
+echo Killing any existing Chrome processes...
+taskkill /F /IM chrome.exe 2>nul
+timeout /t 2 /nobreak >nul
 
 echo Starting Chrome with remote debugging on port %DEBUG_PORT%...
 
